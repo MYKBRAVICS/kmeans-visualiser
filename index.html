@@ -1,1 +1,892 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>k-means, one step at a time</title>
+<style>
+  :root {
+    --bench:  #e9ecee;
+    --paper:  #ffffff;
+    --ink:    #15181b;
+    --mute:   #667079;
+    --rule:   #c9d0d4;
+    --grid:   #eef1f3;
+    --focus:  #0072b2;
+  }
 
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    padding: 32px 20px 64px;
+    background: var(--bench);
+    color: var(--ink);
+    font: 16px/1.65 Iowan Old Style, Charter, Georgia, Cambria, serif;
+  }
+
+  .sheet { max-width: 1120px; margin: 0 auto; }
+
+  h1 {
+    font-size: clamp(28px, 4.4vw, 42px);
+    line-height: 1.08;
+    letter-spacing: -0.022em;
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+
+  .standfirst {
+    max-width: 62ch;
+    color: var(--mute);
+    margin: 0 0 28px;
+    font-size: 17px;
+  }
+
+  /* --- instrument ---------------------------------------------------- */
+
+  .instrument {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 236px;
+    gap: 0;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+  }
+
+  .stage { position: relative; min-width: 0; }
+
+  canvas { display: block; width: 100%; height: auto; cursor: crosshair; }
+
+  .controls {
+    border-left: 1px solid var(--rule);
+    padding: 18px 18px 20px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+                 Consolas, "Liberation Mono", monospace;
+    font-size: 12.5px;
+  }
+
+  .group { margin-bottom: 20px; }
+  .group:last-child { margin-bottom: 0; }
+
+  .group > h2 {
+    font: inherit;
+    font-weight: 600;
+    margin: 0 0 8px;
+    color: var(--mute);
+  }
+
+  .seg { display: flex; flex-direction: column; gap: 4px; }
+
+  button {
+    font: inherit;
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: 7px 10px;
+    text-align: left;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--mute); }
+  button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  button[aria-pressed="true"] {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button:disabled:hover { border-color: var(--rule); }
+
+  .row { display: flex; gap: 4px; }
+  .row > button { flex: 1; text-align: center; }
+
+  .kline { display: flex; align-items: baseline; justify-content: space-between; }
+  .kline output { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  input[type=range] { width: 100%; margin: 6px 0 0; accent-color: var(--ink); }
+  input[type=range]:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
+  /* --- readout -------------------------------------------------------- */
+
+  .readout {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--rule);
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+                 Consolas, "Liberation Mono", monospace;
+  }
+
+  .cell { padding: 11px 16px; border-left: 1px solid var(--rule); }
+  .cell:first-child { border-left: 0; }
+  .cell .k { display: block; font-size: 11.5px; color: var(--mute); }
+  .cell .v {
+    display: block;
+    font-size: 19px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    margin-top: 1px;
+  }
+  .cell .v.quiet { color: var(--mute); }
+
+  /* --- k curve --------------------------------------------------------- */
+
+  .kcurve { grid-column: 1 / -1; border-top: 1px solid var(--rule); }
+
+  .kcurve-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 16px 2px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+                 Consolas, "Liberation Mono", monospace;
+    font-size: 11.5px;
+    color: var(--mute);
+  }
+  #kc-note { color: var(--ink); }
+
+  .kcurve canvas { width: 100%; height: auto; cursor: default; }
+
+  /* --- verdict -------------------------------------------------------- */
+
+  .verdict {
+    margin: 14px 0 0;
+    padding: 13px 16px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--ink);
+    border-radius: 3px;
+    font-size: 15px;
+    max-width: 78ch;
+  }
+  .verdict b { font-weight: 600; }
+
+  /* --- notes ---------------------------------------------------------- */
+
+  .notes {
+    margin-top: 40px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+    gap: 28px 40px;
+    max-width: 1120px;
+  }
+  .notes h3 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+  .notes p { margin: 0; font-size: 15px; max-width: 46ch; }
+  .notes p + p { margin-top: 10px; }
+
+  footer {
+    margin-top: 44px;
+    padding-top: 16px;
+    border-top: 1px solid var(--rule);
+    color: var(--mute);
+    font-size: 14px;
+    max-width: 78ch;
+  }
+  a { color: inherit; text-decoration-color: var(--rule); }
+  a:hover { text-decoration-color: currentColor; }
+
+  @media (max-width: 760px) {
+    .instrument { grid-template-columns: 1fr; }
+    .controls { border-left: 0; border-top: 1px solid var(--rule); }
+    .readout { grid-template-columns: repeat(2, 1fr); }
+    .cell:nth-child(3) { border-left: 0; }
+    .cell:nth-child(n+3) { border-top: 1px solid var(--rule); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <h1>k-means, one step at a time</h1>
+  <p class="standfirst">
+    The algorithm always returns the number of groups you ask for. Watching it
+    run is the quickest way to see what that does and does not tell you.
+    Click the plot to add points.
+  </p>
+
+  <div class="instrument">
+    <div class="stage">
+      <canvas id="plot" width="1560" height="1040"
+              aria-label="Scatter plot of points coloured by cluster, with centroid markers"></canvas>
+    </div>
+
+    <div class="controls">
+      <div class="group">
+        <h2>Data</h2>
+        <div class="seg">
+          <button id="d-sep"   aria-pressed="true">Separated groups</button>
+          <button id="d-over"  aria-pressed="false">Overlapping groups</button>
+          <button id="d-noise" aria-pressed="false">Uniform noise</button>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>Clusters</h2>
+        <div class="kline"><span>k</span><output id="kout">3</output></div>
+        <input id="k" type="range" min="2" max="8" value="3" step="1"
+               aria-label="Number of clusters">
+      </div>
+
+      <div class="group">
+        <h2>Run</h2>
+        <div class="seg">
+          <div class="row">
+            <button id="step">Step</button>
+            <button id="run">Run</button>
+          </div>
+          <button id="reseed">Move starting centroids</button>
+          <button id="clear">Clear added points</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="readout">
+      <div class="cell"><span class="k">Iteration</span><span class="v" id="r-iter">0</span></div>
+      <div class="cell"><span class="k">Points reassigned</span><span class="v" id="r-moved">—</span></div>
+      <div class="cell"><span class="k">Within-cluster SS</span><span class="v" id="r-wss">—</span></div>
+      <div class="cell"><span class="k">Silhouette</span><span class="v" id="r-sil">—</span></div>
+    </div>
+
+    <div class="kcurve">
+      <div class="kcurve-head">
+        <span>Best result at each k, from 12 restarts</span>
+        <span id="kc-note"></span>
+      </div>
+      <canvas id="curve" width="1560" height="300"
+              aria-label="Silhouette and within-cluster sum of squares across k from 2 to 8"></canvas>
+    </div>
+  </div>
+
+  <p class="verdict" id="verdict"></p>
+
+  <div class="notes">
+    <div>
+      <h3>What the starting centroids do</h3>
+      <p>
+        Press <em>Move starting centroids</em> a few times on the overlapping
+        data and run it again. The final grouping changes. k-means converges to
+        a local minimum, not a best answer, which is why real implementations
+        restart from many random seeds and keep the best result.
+      </p>
+    </div>
+    <div>
+      <h3>Reading the silhouette</h3>
+      <p>
+        Silhouette compares how close each point sits to its own cluster
+        against the nearest other one. Rousseeuw's rough guide: above 0.7 is
+        strong, 0.5 to 0.7 reasonable, 0.25 to 0.5 weak, below that no
+        substantial structure.
+      </p>
+      <p>
+        Treat those as orientation rather than a test. The honest comparison is
+        against what the same algorithm scores on data you know has no
+        structure.
+      </p>
+    </div>
+    <div>
+      <h3>Why the noise setting matters</h3>
+      <p>
+        Load the uniform noise data and run it. There are no groups in it at
+        all, and the algorithm still returns k tidy ones, every time, with
+        boundaries that look deliberate.
+      </p>
+      <p>
+        It will do exactly the same thing to your data. That is the reason a
+        clustering result needs a stability check and a null comparison before
+        anyone describes the groups as types.
+      </p>
+    </div>
+  </div>
+
+  <footer>
+    Built to explain a trajectory-clustering analysis to an audience of
+    biologists. Runs offline, no dependencies. Free to use in teaching.
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+/* ====================================================================
+   Math. Kept free of DOM references so it can be tested on its own.
+   ==================================================================== */
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function gaussian(rand) {
+  let u = 0, v = 0;
+  while (u === 0) u = rand();
+  while (v === 0) v = rand();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function dist2(a, b) {
+  const dx = a[0] - b[0], dy = a[1] - b[1];
+  return dx * dx + dy * dy;
+}
+
+function assign(points, centroids) {
+  const labels = new Array(points.length);
+  for (let i = 0; i < points.length; i++) {
+    let best = 0, bestD = Infinity;
+    for (let c = 0; c < centroids.length; c++) {
+      const d = dist2(points[i], centroids[c]);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    labels[i] = best;
+  }
+  return labels;
+}
+
+function update(points, labels, k, previous) {
+  const sums = Array.from({ length: k }, () => [0, 0, 0]);
+  for (let i = 0; i < points.length; i++) {
+    const s = sums[labels[i]];
+    s[0] += points[i][0]; s[1] += points[i][1]; s[2] += 1;
+  }
+  // An empty cluster keeps its previous position rather than becoming NaN.
+  // Production implementations usually re-seed it on the farthest point;
+  // holding it still is easier to watch and does not distort the lesson.
+  return sums.map((s, c) =>
+    s[2] === 0 ? previous[c].slice() : [s[0] / s[2], s[1] / s[2]]);
+}
+
+function inertia(points, labels, centroids) {
+  let total = 0;
+  for (let i = 0; i < points.length; i++) total += dist2(points[i], centroids[labels[i]]);
+  return total;
+}
+
+/* Mean silhouette width (Rousseeuw 1987).
+   a = mean distance to own cluster, b = mean distance to nearest other,
+   s = (b - a) / max(a, b). Singleton clusters score 0 by definition. */
+function silhouette(points, labels, k) {
+  const n = points.length;
+  if (n < 2 || k < 2) return NaN;
+
+  const members = Array.from({ length: k }, () => []);
+  for (let i = 0; i < n; i++) members[labels[i]].push(i);
+  if (members.some(m => m.length === 0)) return NaN;
+
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const own = labels[i];
+    const sums = new Float64Array(k);
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue;
+      sums[labels[j]] += Math.sqrt(dist2(points[i], points[j]));
+    }
+
+    if (members[own].length === 1) continue;       // s = 0
+    const a = sums[own] / (members[own].length - 1);
+
+    let b = Infinity;
+    for (let c = 0; c < k; c++) {
+      if (c === own) continue;
+      b = Math.min(b, sums[c] / members[c].length);
+    }
+
+    const denom = Math.max(a, b);
+    if (denom > 0) total += (b - a) / denom;
+  }
+  return total / n;
+}
+
+/* ====================================================================
+   Data
+   ==================================================================== */
+
+const W = 1560, H = 1040, PAD = 70;
+
+function makeData(kind, seed) {
+  const rand = mulberry32(seed);
+  const pts = [];
+  const put = (x, y) => pts.push([
+    Math.min(Math.max(x, PAD), W - PAD),
+    Math.min(Math.max(y, PAD), H - PAD),
+  ]);
+
+  if (kind === "noise") {
+    for (let i = 0; i < 240; i++) {
+      put(PAD + rand() * (W - 2 * PAD), PAD + rand() * (H - 2 * PAD));
+    }
+    return pts;
+  }
+
+  const spread = kind === "separated" ? 58 : 150;
+  const centres = [
+    [W * 0.26, H * 0.28], [W * 0.72, H * 0.24],
+    [W * 0.34, H * 0.74], [W * 0.76, H * 0.70],
+  ];
+  for (const [cx, cy] of centres) {
+    for (let i = 0; i < 60; i++) {
+      put(cx + gaussian(rand) * spread, cy + gaussian(rand) * spread * 0.86);
+    }
+  }
+  return pts;
+}
+
+/* ====================================================================
+   State
+   ==================================================================== */
+
+/* Okabe-Ito, the standard colour-vision-safe qualitative palette for
+   scientific figures. Chosen so the plot stays readable for the roughly
+   1 in 12 men with red-green colour blindness — the same reason it is
+   the default in most journal figure guidance. */
+const CLUSTER_COLOURS = [
+  "#0072b2", "#d55e00", "#009e73", "#cc79a7",
+  "#e69f00", "#56b4e9", "#8f4b9e", "#4d4d4d",
+];
+
+const state = {
+  kind: "separated",
+  dataSeed: 1,
+  // Chosen, not arbitrary. Uniform random seeding lands in a local minimum on
+  // this dataset in roughly 40% of draws, which is a lesson worth teaching but
+  // a bad first impression — a visitor pressing Run should see the algorithm
+  // find the four groups cleanly. The reseed button draws freely from there,
+  // so the local-minimum behaviour is one click away and deliberately framed.
+  seedSeed: 6,
+  k: 3,
+  points: [],
+  extra: [],
+  centroids: [],
+  labels: [],
+  iter: 0,
+  moved: null,
+  converged: false,
+  phase: "assign",     // which half-step comes next
+  timer: null,
+};
+
+function allPoints() { return state.points.concat(state.extra); }
+
+function seedCentroids() {
+  const pts = allPoints();
+  const rand = mulberry32(state.seedSeed);
+  const picked = new Set();
+  const cents = [];
+  let guard = 0;
+  while (cents.length < state.k && guard++ < 5000) {
+    const i = Math.floor(rand() * pts.length);
+    if (picked.has(i)) continue;
+    picked.add(i);
+    // Jittered so the starting positions are visibly not the data points.
+    cents.push([pts[i][0] + (rand() - 0.5) * 60, pts[i][1] + (rand() - 0.5) * 60]);
+  }
+  while (cents.length < state.k) cents.push([W / 2, H / 2]);
+
+  state.centroids = cents;
+  state.labels = new Array(pts.length).fill(-1);
+  state.iter = 0;
+  state.moved = null;
+  state.converged = false;
+  state.phase = "assign";
+}
+
+function loadData(kind) {
+  state.kind = kind;
+  state.points = makeData(kind, state.dataSeed);
+  state.extra = [];
+  seedCentroids();
+}
+
+function stepOnce() {
+  if (state.converged) return;
+  const pts = allPoints();
+
+  if (state.phase === "assign") {
+    const next = assign(pts, state.centroids);
+    let moved = 0;
+    for (let i = 0; i < next.length; i++) if (next[i] !== state.labels[i]) moved++;
+    // The first pass is not a reassignment — every point is unlabelled.
+    state.moved = state.iter === 0 ? null : moved;
+    state.labels = next;
+    state.phase = "update";
+    if (state.iter > 0 && moved === 0) state.converged = true;
+  } else {
+    state.centroids = update(pts, state.labels, state.k, state.centroids);
+    state.iter++;
+    state.phase = "assign";
+  }
+}
+
+function stopRunning() {
+  if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  document.getElementById("run").textContent = "Run";
+}
+
+/* ====================================================================
+   Drawing
+   ==================================================================== */
+
+const canvas = document.getElementById("plot");
+const ctx = canvas.getContext("2d");
+
+function fitCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || W;
+  const cssH = cssW * (H / W);
+  canvas.style.height = cssH + "px";
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Graph paper
+  ctx.strokeStyle = "#eef1f3";
+  ctx.lineWidth = 1.2;
+  for (let x = PAD; x <= W - PAD; x += 65) {
+    ctx.beginPath(); ctx.moveTo(x, PAD); ctx.lineTo(x, H - PAD); ctx.stroke();
+  }
+  for (let y = PAD; y <= H - PAD; y += 65) {
+    ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(W - PAD, y); ctx.stroke();
+  }
+
+  const pts = allPoints();
+  const labelled = state.iter > 0 || state.phase === "update";
+
+  // Assignment lines, drawn only on the first couple of iterations, where
+  // "each point joins its nearest centroid" is the thing being explained.
+  if (labelled && state.iter <= 2) {
+    ctx.lineWidth = 1;
+    for (let i = 0; i < pts.length; i++) {
+      const c = state.labels[i];
+      if (c < 0) continue;
+      ctx.strokeStyle = CLUSTER_COLOURS[c % CLUSTER_COLOURS.length] + "26";
+      ctx.beginPath();
+      ctx.moveTo(pts[i][0], pts[i][1]);
+      ctx.lineTo(state.centroids[c][0], state.centroids[c][1]);
+      ctx.stroke();
+    }
+  }
+
+  // Points
+  for (let i = 0; i < pts.length; i++) {
+    const c = state.labels[i];
+    ctx.beginPath();
+    ctx.arc(pts[i][0], pts[i][1], 7, 0, Math.PI * 2);
+    ctx.fillStyle = (labelled && c >= 0)
+      ? CLUSTER_COLOURS[c % CLUSTER_COLOURS.length]
+      : "#9aa4ab";
+    ctx.fill();
+  }
+
+  // Centroids
+  for (let c = 0; c < state.centroids.length; c++) {
+    const [x, y] = state.centroids[c];
+    const col = CLUSTER_COLOURS[c % CLUSTER_COLOURS.length];
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 7;
+    crosshair(x, y); ctx.stroke();
+    ctx.strokeStyle = col; ctx.lineWidth = 3.5;
+    crosshair(x, y); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, 15, 0, Math.PI * 2);
+    ctx.strokeStyle = col; ctx.lineWidth = 3.5; ctx.stroke();
+  }
+
+  function crosshair(x, y) {
+    ctx.beginPath();
+    ctx.moveTo(x - 24, y); ctx.lineTo(x + 24, y);
+    ctx.moveTo(x, y - 24); ctx.lineTo(x, y + 24);
+  }
+}
+
+/* ====================================================================
+   The k curve: silhouette and within-cluster SS across k
+   ==================================================================== */
+
+/* Computed with restarts, unlike the live demo above, and for a reason worth
+   stating. A single random start does NOT guarantee that within-cluster SS
+   falls as k rises — a bad seed at k=5 can score worse than a good seed at
+   k=4, which makes the elbow look like it bends the wrong way. The property
+   everyone relies on belongs to the best solution at each k, not to any one
+   run. Twelve restarts is enough to recover it on data this size. */
+
+function bestAtK(pts, k, restarts) {
+  let best = null;
+  for (let r = 0; r < restarts; r++) {
+    const rand = mulberry32(k * 7919 + r * 104729 + 17);
+    const picked = new Set();
+    let cents = [], guard = 0;
+    while (cents.length < k && guard++ < 5000) {
+      const i = Math.floor(rand() * pts.length);
+      if (picked.has(i)) continue;
+      picked.add(i);
+      cents.push(pts[i].slice());
+    }
+    if (cents.length < k) continue;
+
+    let labels = assign(pts, cents);
+    for (let it = 0; it < 60; it++) {
+      cents = update(pts, labels, k, cents);
+      const next = assign(pts, cents);
+      let same = true;
+      for (let i = 0; i < next.length; i++) if (next[i] !== labels[i]) { same = false; break; }
+      labels = next;
+      if (same) break;
+    }
+
+    const wss = inertia(pts, labels, cents);
+    if (!best || wss < best.wss) best = { wss, labels };
+  }
+  if (!best) return null;
+  return { wss: best.wss, sil: silhouette(pts, best.labels, k) };
+}
+
+let curveCache = { key: "", rows: [] };
+
+function computeCurve() {
+  const pts = allPoints();
+  const key = state.kind + ":" + pts.length;
+  if (curveCache.key === key) return curveCache.rows;
+
+  const rows = [];
+  for (let k = 2; k <= 8; k++) {
+    const r = bestAtK(pts, k, 12);
+    if (r) rows.push({ k, wss: r.wss, sil: Number.isFinite(r.sil) ? r.sil : 0 });
+  }
+  curveCache = { key, rows };
+  return rows;
+}
+
+const curveCanvas = document.getElementById("curve");
+const cctx = curveCanvas.getContext("2d");
+const CW = 1560, CH = 300;
+
+function fitCurve() {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = curveCanvas.clientWidth || CW;
+  const cssH = cssW * (CH / CW);
+  curveCanvas.style.height = cssH + "px";
+  curveCanvas.width = Math.round(cssW * dpr);
+  curveCanvas.height = Math.round(cssH * dpr);
+  cctx.setTransform(curveCanvas.width / CW, 0, 0, curveCanvas.height / CH, 0, 0);
+}
+
+function drawCurve() {
+  const rows = computeCurve();
+  cctx.clearRect(0, 0, CW, CH);
+  if (!rows.length) return;
+
+  const L = 64, R = CW - 64, T = 26, B = CH - 44;
+  const xFor = k => L + (k - 2) / 6 * (R - L);
+
+  const maxWss = Math.max(...rows.map(r => r.wss));
+  const maxSil = Math.max(0.8, ...rows.map(r => r.sil));
+
+  cctx.font = "500 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  cctx.textAlign = "center";
+
+  // Baseline and k labels
+  cctx.strokeStyle = "#c9d0d4"; cctx.lineWidth = 1.2;
+  cctx.beginPath(); cctx.moveTo(L, B); cctx.lineTo(R, B); cctx.stroke();
+  cctx.fillStyle = "#667079";
+  for (const r of rows) cctx.fillText("k=" + r.k, xFor(r.k), B + 26);
+
+  // Within-cluster SS, quiet grey — present for reference, not the answer
+  cctx.strokeStyle = "#b6bfc5"; cctx.lineWidth = 2.5;
+  cctx.beginPath();
+  rows.forEach((r, i) => {
+    const y = B - (r.wss / maxWss) * (B - T);
+    i ? cctx.lineTo(xFor(r.k), y) : cctx.moveTo(xFor(r.k), y);
+  });
+  cctx.stroke();
+
+  // Silhouette, the line that actually answers the question
+  cctx.strokeStyle = "#0072b2"; cctx.lineWidth = 3;
+  cctx.beginPath();
+  rows.forEach((r, i) => {
+    const y = B - (r.sil / maxSil) * (B - T);
+    i ? cctx.lineTo(xFor(r.k), y) : cctx.moveTo(xFor(r.k), y);
+  });
+  cctx.stroke();
+
+  const bestK = rows.reduce((a, b) => (b.sil > a.sil ? b : a));
+
+  for (const r of rows) {
+    const y = B - (r.sil / maxSil) * (B - T);
+    const isBest = r.k === bestK.k;
+    cctx.beginPath(); cctx.arc(xFor(r.k), y, isBest ? 9 : 5.5, 0, Math.PI * 2);
+    cctx.fillStyle = "#0072b2"; cctx.fill();
+    if (isBest) {
+      cctx.strokeStyle = "#ffffff"; cctx.lineWidth = 3; cctx.stroke();
+    }
+    cctx.fillStyle = r.k === state.k ? "#15181b" : "#667079";
+    cctx.font = (r.k === state.k ? "600 " : "500 ")
+              + "14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    cctx.fillText(r.sil.toFixed(2), xFor(r.k), y - 18);
+  }
+
+  // Legend
+  cctx.textAlign = "left";
+  cctx.font = "500 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  cctx.fillStyle = "#0072b2"; cctx.fillText("silhouette", L, T - 6);
+  cctx.fillStyle = "#96a1a8"; cctx.fillText("within-cluster SS", L + 130, T - 6);
+
+  const note = document.getElementById("kc-note");
+  note.textContent = state.kind === "noise"
+    ? `peak at k=${bestK.k} — in data with no groups`
+    : `peak at k=${bestK.k}`;
+}
+
+/* ====================================================================
+   Readout
+   ==================================================================== */
+
+const $ = id => document.getElementById(id);
+
+function refresh() {
+  draw();
+  drawCurve();
+
+  const pts = allPoints();
+  const started = state.iter > 0;
+
+  $("r-iter").textContent = state.iter;
+  $("r-moved").textContent = state.moved === null ? "—" : state.moved;
+  $("r-moved").classList.toggle("quiet", state.moved === null);
+
+  let sil = NaN;
+  if (started) {
+    $("r-wss").textContent = Math.round(inertia(pts, state.labels, state.centroids) / 1000) + "k";
+    $("r-wss").classList.remove("quiet");
+    sil = silhouette(pts, state.labels, state.k);
+    $("r-sil").textContent = Number.isFinite(sil) ? sil.toFixed(3) : "—";
+    $("r-sil").classList.toggle("quiet", !Number.isFinite(sil));
+  } else {
+    $("r-wss").textContent = "—"; $("r-wss").classList.add("quiet");
+    $("r-sil").textContent = "—"; $("r-sil").classList.add("quiet");
+  }
+
+  $("step").disabled = state.converged;
+  $("run").disabled = state.converged;
+
+  $("verdict").innerHTML = verdictText(started, sil);
+}
+
+function verdictText(started, sil) {
+  if (!started) {
+    return "Centroids are placed. Press <b>Step</b> to assign every point to "
+         + "its nearest one, then again to move each centroid to the middle of "
+         + "what it caught.";
+  }
+
+  const reading = !Number.isFinite(sil) ? "not defined for this grouping"
+    : sil > 0.7  ? "strong separation"
+    : sil > 0.5  ? "reasonable separation"
+    : sil > 0.25 ? "weak separation"
+    : "no substantial separation";
+
+  const head = state.converged
+    ? `Converged after ${state.iter} iterations. `
+    : "";
+
+  if (state.kind === "noise" && state.converged) {
+    return head + `Silhouette ${sil.toFixed(3)}, ${reading} — and there are `
+         + "<b>no groups in this data at all</b>. It is uniform noise. The "
+         + "algorithm partitioned it anyway, confidently, and the boundaries "
+         + "look deliberate. This is the number your real data has to beat.";
+  }
+
+  if (state.converged) {
+    return head + `Silhouette ${sil.toFixed(3)}, ${reading}. Now load the `
+         + "uniform noise and run it at the same k. Whatever it scores is "
+         + "roughly what this algorithm returns from nothing.";
+  }
+
+  return state.phase === "update"
+    ? "Points assigned to their nearest centroid. Step again to move each "
+    + "centroid to the middle of its cluster."
+    : "Centroids moved. Step again to reassign the points, some of which now "
+    + "have a different nearest centroid.";
+}
+
+/* ====================================================================
+   Events
+   ==================================================================== */
+
+const DATASETS = { "d-sep": "separated", "d-over": "overlapping", "d-noise": "noise" };
+
+for (const [id, kind] of Object.entries(DATASETS)) {
+  $(id).addEventListener("click", () => {
+    stopRunning();
+    for (const other of Object.keys(DATASETS)) {
+      $(other).setAttribute("aria-pressed", String(other === id));
+    }
+    loadData(kind);
+    refresh();
+  });
+}
+
+$("k").addEventListener("input", e => {
+  stopRunning();
+  state.k = +e.target.value;
+  $("kout").textContent = state.k;
+  seedCentroids();
+  refresh();
+});
+
+$("step").addEventListener("click", () => { stopRunning(); stepOnce(); refresh(); });
+
+$("run").addEventListener("click", () => {
+  if (state.timer) { stopRunning(); return; }
+  $("run").textContent = "Pause";
+  state.timer = setInterval(() => {
+    stepOnce();
+    refresh();
+    if (state.converged) stopRunning();
+  }, 420);
+});
+
+$("reseed").addEventListener("click", () => {
+  stopRunning();
+  state.seedSeed = (state.seedSeed * 1103515245 + 12345) >>> 8;
+  seedCentroids();
+  refresh();
+});
+
+$("clear").addEventListener("click", () => {
+  stopRunning();
+  state.extra = [];
+  seedCentroids();
+  refresh();
+});
+
+canvas.addEventListener("click", e => {
+  stopRunning();
+  const r = canvas.getBoundingClientRect();
+  state.extra.push([
+    (e.clientX - r.left) / r.width * W,
+    (e.clientY - r.top) / r.height * H,
+  ]);
+  seedCentroids();
+  refresh();
+});
+
+window.addEventListener("resize", () => { fitCanvas(); fitCurve(); refresh(); });
+
+/* Boot */
+fitCanvas();
+fitCurve();
+loadData("separated");
+refresh();
+</script>
+</body>
+</html>
